@@ -11,6 +11,15 @@ Searching for relevant information in vast repositories of unstructured text can
 
 In this guide, we will break down how to use FAISS in combination with sentence transformers to create a semantic search solution that can effectively locate related documents based on a user query. For example, this could be used in a customer support system to find the most relevant past tickets or knowledge base articles in response to a user's question.
 
+##Assumptions
+This article will focus on implementing embeddings. I am assuming that you have basic understanding of python, RAG, LLM.
+
+##What is Embedding?
+Embedding introduction
+
+### Why understanding Embeddings and Vector DB important for RAG implementation?
+In many production RAG implementation scenario like chatbot implementation, LLM/AI works like a beautifier only. Real magic happens at your data. Main challange is in searching from your data not in using LLM.
+
 ## Overview of the Components
 
 Our solution is composed of several major components:
