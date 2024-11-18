@@ -1,7 +1,7 @@
 ---
 title: Leveraging FAISS and Sentence Embeddings for Document Search
 description: Implement an efficient document search system using FAISS and sentence embeddings, useful in applications like chatbots, document retrieval, and natural language understanding.
-author: OpenAI Assistant
+author: Utsav Verma
 date: 2024-11-18
 ---
 
