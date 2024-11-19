@@ -63,6 +63,13 @@ So far, we have covered theoretical part. Given below section demonstrates how t
 In production applications, documentation is often extensive and finding information related to a specific topic can be challenging due to scattered information across various documents. To mimic this scenario, I have created a documentation text file. This guide will show you how to search for information within this file. Although a simple text file is used here, the same approach can be applied to PDFs as well.
 
 To make this example more realistic, I used the SAP rule engine documentation available at [SAP Help Portal](https://help.sap.com/docs/SAP_COMMERCE/9d346683b0084da2938be8a285c0c27a/ba076fa614e549309578fba7159fe628.html) and compiled it into a single documentation text file. The text file used in this demonstration is attached to the article and can also be found in the GitHub repository.
+## How It Works
+The system works in the following steps:
+
+- Load text documents.
+- Convert documents into vector embeddings using a Sentence Transformer model.
+- Store these embeddings in a FAISS index for efficient similarity search.
+- Query the index with user input to retrieve the most relevant documents.
 
 ## Step-by-Step Breakdown
 
@@ -71,91 +78,109 @@ To get started, you need to set up your Python environment. Here's a list of dep
 ```bash
 conda install pytorch::faiss-cpu
 conda install conda-forge::sentence-transformers
+conda install numpy
 ```
-### Step 1: Reading the Document File
-
-The first step is reading the documents from a text file. In this solution, each line in the file represents a single document, which simplifies processing and indexing. If your input format differs (e.g., multiple paragraphs per line or JSON format), you may need to adapt the code to appropriately parse and extract individual documents for indexing. For this solution, we assume each line in the file represents a document.
-
-```python
-file_path = r'.\Documentation.txt'
-embedding_model = EmbeddingModel(file_path)
-texts = embedding_model.texts
-```
-
-This step reads the contents of `Documentation.txt` and stores each line as an entry in the list `texts`.
-
-### Step 2: Embedding Model Initialization
-
-We use `sentence-transformers` to initialize our embedding model. Embedding models convert textual data into a vector format that can be used for similarity comparison.
-
-```python
-model = EmbeddingModel.get_model(embedding_model.model_name)
+### 1. Importing the Required Libraries
+``` python
+import faiss
+import os
+import numpy as np
+from sentence_transformers import SentenceTransformer
 ```
 
-The model used here is `'sentence-transformers/all-MiniLM-L6-v2'`, but this is configurable, allowing flexibility for different use cases.
+**faiss**: The core library used for similarity search. FAISS enables efficient searching through large vector spaces.
 
-### Step 3: Generate Embeddings in Batches
+**os**: This module is used to interact with the file system, such as listing files in a directory.
 
-Converting all text documents into embeddings at once might lead to high memory usage, especially with large datasets. Therefore, we generate embeddings in manageable batches:
+**numpy**: Used for handling vector operations and converting embeddings to numerical arrays.
 
-```python
-batch_size = 32
-embeddings = []
-for i in range(0, len(texts), batch_size):
-    batch_texts = texts[i:i + batch_size]
-    batch_embeddings = model.encode(batch_texts)
-    embeddings.extend(batch_embeddings)
+**sentence_transformers**: Provides pre-trained models to convert sentences into dense vector embeddings. These embeddings are used to determine semantic similarity between sentences.
+
+### 2. Defining the Embedding Model and Document Loader Class
+``` python
+class EmbeddingModel:
+    def __init__(self, document_path, model_name='sentence-transformers/all-MiniLM-L6-v2'):
+        self.document_path = document_path
+        self.model_name = model_name
+        self.model = self.get_model(model_name)
+``` 
+The EmbeddingModel class initializes with two main attributes:
+
+**document_path**: Path to the documents that need to be processed.
+
+**model_name**: Specifies which pre-trained model to use. Here, it uses the all-MiniLM-L6-v2 model from sentence transformers.
+
+**self.model** loads the pre-trained embedding model using the get_model method.
+
+### 3. Loading Text Documents
+``` python
+    def load_texts(self):
+        texts = []
+        for filename in os.listdir(self.document_path):
+            with open(os.path.join(self.document_path, filename), 'r', encoding='utf-8') as file:
+                texts.append(file.read())
+        return texts
+``` 
+load_texts reads all documents in the specified document_path directory. It iterates over each file and appends the content to a list called texts.
+
+The utf-8 encoding ensures compatibility with a wide range of text formats.
+
+The method returns the list of texts, which will be used later for embedding generation.
+
+### 4. Model Loading Method
+``` python
+    @classmethod
+    def get_model(cls, model_name='sentence-transformers/all-MiniLM-L6-v2'):
+        return SentenceTransformer(model_name)
 ```
+get_model is a class method used to load the specified pre-trained embedding model.
 
-This approach reduces memory pressure, ensuring that the solution scales well even for larger files.
+It uses SentenceTransformer from the sentence_transformers library to get the model instance. The embedding model turns text into numerical vectors, which are crucial for similarity search.
 
-### Step 4: Convert Embeddings to Numpy Array
-
-FAISS requires embeddings to be in a specific format (`float32`). We convert our embeddings to the required format:
-
-```python
-embeddings_np = np.array(embeddings).astype('float32')
+### 5. Embedding Generation
+``` python
+    def generate_embeddings(self, texts):
+        return self.model.encode(texts, convert_to_numpy=True)
 ```
+generate_embeddings takes in a list of texts and converts each text into a dense vector representation.
 
-### Step 5: Set Up FAISS Index
+The encode function from the SentenceTransformer model converts text into numerical embeddings.Setting convert_to_numpy=True allows easy use of embeddings in FAISS and Numpy.
 
-We use FAISS to create an index for the embeddings. In this example, we use `IndexIVFFlat`, which performs clustering to speed up searches on large datasets:
+### 6. Creating and Training the FAISS Index
+``` python
+    def create_faiss_index(self, embeddings_np, embedding_dim, nlist=10):
+        quantizer = faiss.IndexFlatL2(embedding_dim)
+        index = faiss.IndexIVFFlat(quantizer, embedding_dim, nlist, faiss.METRIC_L2)
+        index.train(embeddings_np)
+        index.add(embeddings_np)
+        return index
+``` 
+**create_faiss_index** builds an Index for fast similarity search:
 
-```python
-embedding_dim = embeddings_np.shape[1]
-nlist = 100
-index = faiss.IndexIVFFlat(faiss.IndexFlatL2(embedding_dim), embedding_dim, nlist)
+**embedding_dim** is the dimensionality of the embedding vectors.
+
+**nlist** is the number of clusters for partitioning the dataset during search.
+
+**IndexFlatL2** is a simple index that computes L2 distances.
+
+**IndexIVFFlat** is used for faster searching by clustering the embeddings.
+
+**train(embeddings_np)** prepares the FAISS index to handle the vector space represented by the embeddings.
+
+**add(embeddings_np)** adds all vectors to the index for similarity search.
+
+### 7. Saving the FAISS Index (Optional)
+``` python
+    def save_index(self, index, index_path='faiss_index.bin'):
+        faiss.write_index(index, index_path)
 ```
+This method saves the trained FAISS index to a file (faiss_index.bin) for later use, which can speed up future searches.
 
-The `nlist` parameter defines the number of clusters to use, which affects the search speed and accuracy. After setting up the index, we train it with the generated embeddings.
-
-### Step 6: Adding Embeddings to the Index
-
-Once the index is trained, we add our embeddings to it:
-
-```python
-index.add(embeddings_np)
-print(f"Indexed {index.ntotal} documents into FAISS")
-```
-
-This allows us to later query the index for similar documents based on a given input.
-
-### Step 7: Saving the FAISS Index
-
-To avoid retraining and adding embeddings each time, we save the index to disk:
-
-```python
-faiss.write_index(index, 'faiss_index.bin')
-```
-
-This saved index can be reloaded for future searches, making the solution more efficient.
-
-### Step 8: Manage FAISS Index Loading
-
-We define a class to manage the loading of the FAISS index, so that we either load an existing index from disk or create a new one if it doesn't exist:
-
-```python
+### 8. Loading or Creating FAISS Index Dynamically
+``` python
 class FaissIndex:
+    _index_instance = None
+
     @classmethod
     def get_index(cls, index_path='faiss_index.bin'):
         if cls._index_instance is None:
@@ -169,31 +194,86 @@ class FaissIndex:
                 cls._index_instance.add(embeddings_np)
                 print("FAISS index created and loaded successfully.")
         return cls._index_instance
-```
+``` 
+This is a singleton class that ensures only one instance of the FAISS index is loaded.
 
-This ensures that the index is always ready to be used when searching.
+The get_index method checks if a saved index exists and loads it. If an index does not exist, it creates and trains a new one, then adds embeddings.
 
-### Step 9: Search the FAISS Index
-
-Finally, we implement the function to search the FAISS index. The retrieved results can be used in broader applications, such as populating a user interface with relevant information, further processing for analytics, or providing context-aware responses in a chatbot. Given a query, we encode it and search for the closest matches in the index:
-
-```python
+### 9. Defining the Search Function
+``` python
 def search_faiss_index(query):
+    # Load model and index
     model = EmbeddingModel.get_model()
     index = FaissIndex.get_index('faiss_index.bin')
 
+    # Handle empty query case
     if not query.strip():
         return "Query is empty. Please provide a valid query."
 
+    # Encode the query
     query_embedding = model.encode([query]).astype('float32')
-    k = min(3, index.ntotal)
+
+    # Ensure k is not greater than the number of indexed embeddings
+    k = 3  # Number of nearest neighbors to retrieve
+    k = min(k, index.ntotal)
+
+    # Search in the index
     distances, indices = index.search(query_embedding, k)
 
-    retrieved_texts = [texts[idx] for idx in indices[0] if 0 <= idx < len(texts)]
-    return "\n".join(retrieved_texts) if retrieved_texts else "No relevant information found."
-```
+    # Prepare the context from retrieved texts
+    retrieved_texts = []
+    for idx in indices[0]:
+        if 0 <= idx < len(texts):
+            retrieved_texts.append(texts[idx])
+    
+    answer=""
 
-The search function checks for empty queries, encodes the input, and retrieves the nearest documents from the FAISS index. It also ensures `k` (number of results) is not greater than the number of indexed documents, avoiding errors.
+    # Join the retrieved texts to create context
+    if retrieved_texts:
+        answer = "\n".join(retrieved_texts)
+    else:
+        answer = "No relevant information found."
+
+    return answer
+```
+**search_faiss_index** allows users to input a text query: It first encodes the query using the pre-trained embedding model.
+
+**index.search(query_embedding, k)** finds the k most similar entries in the FAISS index. It Retrieves the corresponding documents based on similarity scores. It Returns a combined result of relevant documents or an appropriate message if no matches are found.
+
+### Running the Script
+
+**Prepare Documents**: Place all text documents in a folder. Specify the folder path when initializing the EmbeddingModel.
+
+**Generate Embeddings**: Use EmbeddingModel to load texts and generate embeddings.
+
+**Create and Train FAISS Index**: Pass the embeddings to create_faiss_index() to build your FAISS index.
+
+**Search**: Use search_faiss_index(query) to find the most relevant documents for your query.
+
+### Example Usage
+
+####  Initialize the embedding model
+``` python
+embedding_model = EmbeddingModel(document_path='path/to/documents')
+``` 
+#### Load and encode the documents
+``` python
+doc_texts = embedding_model.load_texts()
+embeddings_np = embedding_model.generate_embeddings(doc_texts)
+``` 
+#### Create and train the FAISS index
+``` python
+faiss_index = embedding_model.create_faiss_index(embeddings_np, embedding_dim=embeddings_np.shape[1])
+``` 
+#### Save the FAISS index
+``` python
+embedding_model.save_index(faiss_index)
+``` 
+#### Perform a search
+``` python
+result = search_faiss_index("sample query")
+print(result)
+``` 
 
 ## Conclusion
 
